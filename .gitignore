@@ -1,0 +1,5 @@
+doc/tags
+build/
+*.rockspec
+.DS_Store
+*.log

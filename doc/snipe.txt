@@ -1,0 +1,160 @@
+*snipe.txt*    Minimal async AI for Neovim
+
+==============================================================================
+CONTENTS                                            *snipe-contents*
+
+1. Introduction ............................ |snipe-introduction|
+2. Installation ............................ |snipe-installation|
+3. Configuration ........................... |snipe-configuration|
+4. Commands ................................ |snipe-commands|
+5. Panel keys .............................. |snipe-panel-keys|
+6. Agent protocol .......................... |snipe-protocol|
+7. Statusline .............................. |snipe-statusline|
+8. API ..................................... |snipe-api|
+
+==============================================================================
+1. INTRODUCTION                                     *snipe-introduction*
+
+snipe is a minimalist, fully asynchronous AI plugin. It never blocks the
+editor: everything runs through `vim.uv.spawn` + `curl` with streaming SSE.
+
+* Leave the AI working on a task (`complete this function`, `write tests for
+  foo`) and keep editing.
+* Always know what the AI is doing: the model streams <status> updates live
+  into its log buffer, the task panel, and the statusline.
+* Ask quick questions about the project with a single input window.
+* It understands your project: LSP diagnostics, the symbol under your cursor,
+  git status, and relevant files.
+
+Works with any OpenAI-compatible endpoint (OpenAI, Ollama, LM Studio, vLLM).
+The only external dependency is `curl`.
+
+==============================================================================
+2. INSTALLATION                                     *snipe-installation*
+
+lazy.nvim: >
+  { "luisfer-cli/snipe.nvim", opts = {} }
+<
+
+Set the API key through the `OPENAI_API_KEY` (or `SNIPE_API_KEY`)
+environment variable. For local providers just change the provider.
+
+==============================================================================
+3. CONFIGURATION                                     *snipe-configuration*
+
+>lua
+require("snipe").setup({
+  provider = { name = "openai" }, -- "openai" | "ollama" | "lmstudio"
+  -- or fully custom:
+  -- provider = { name = "openai", base_url = "...", model = "...", api_key = "..." },
+
+  context = {
+    max_file_chars = 20000,
+    max_context_chars = 60000,
+    max_files = 8,
+    include_git_status = true,
+    include_diagnostics = true,
+  },
+
+  tasks = {
+    apply = "confirm",        -- "confirm" | "auto"
+    max_parallel = 2,
+    max_reads = 6,            -- max <read> file requests per task
+    max_rounds = 5,           -- max agent loop rounds per task
+    format_after_apply = true,
+  },
+
+  temperature = 0.2,
+  notify = true,
+})
+<
+
+Provider presets:~
+  openai     https://api.openai.com/v1                  (gpt-4o-mini)
+  openrouter https://openrouter.ai/api/v1               (deepseek/deepseek-v4-flash)
+  ollama     http://localhost:11434/v1                 (llama3.1)
+  lmstudio   http://localhost:1234/v1                  (server default model)
+
+API keys are resolved in this order: explicit `api_key` in the config, then a
+provider environment variable (OPENROUTER_API_KEY, OPENAI_API_KEY, ...), then
+the key stored with |:SnipeAuth| (saved in ~/.config/snipe/key, chmod 600).
+
+==============================================================================
+4. COMMANDS                                         *snipe-commands*
+
+  :Snipe                    Toggle the task panel.
+  :SnipePanel               Open the task panel.
+  :SnipeTask <prompt>       Start an async task (apply mode from config).
+  :SnipeTask --auto <prompt> Start a task and auto-apply its edits.
+  :SnipeTask --confirm <p>  Start a task, review edits before applying.
+  :SnipeAsk <question>      Ask a question about the project (async).
+  :SnipeKill [id]           Kill the running task (or the one given by id).
+  :SnipeApply [id]          Apply pending edits (default: last review).
+  :SnipeRevert [id]         Revert edits applied by a task.
+  :SnipeAuth [provider]     Store the API key locally (chmod 600).
+  :SnipeAuthRemove [provider] Remove the stored API key.
+
+Suggested keymaps: >
+  vim.keymap.set("n", "<leader>ap", require("snipe").panel_toggle)
+  vim.keymap.set("n", "<leader>aa", function() require("snipe").ask() end)
+  vim.keymap.set("n", "<leader>at", function() require("snipe").task("") end)
+
+==============================================================================
+5. PANEL KEYS                                        *snipe-panel-keys*
+
+  j / k        move between tasks
+  <cr>         apply pending edits of the selected task
+  o            open the task log in a split (live streaming)
+  x            kill the selected running task
+  d            dismiss the selected task
+  q / <esc>    close the panel
+
+Task states: queued (○), running (⚡), review (✋), done (✓), error (✗),
+killed (✕), reverted (↺).
+
+==============================================================================
+6. AGENT PROTOCOL                                    *snipe-protocol*
+
+While working, the model emits structured blocks that snipe understands:
+
+  <status>One sentence about what I'm doing right now</status>
+
+  <read file="relative/path/from/root">
+
+  <diff file="relative/path/from/root">
+  --- a/relative/path
+  +++ b/relative/path
+  @@ -1,3 +1,5 @@
+  ...
+  </diff>
+
+The agent loop: when the model emits <read>, snipe feeds it the file contents
+and calls again (bounded by |snipe-configuration| `tasks.max_reads` and
+`tasks.max_rounds`). Final edits arrive as unified diffs, which are validated
+against the current file before being applied to real buffers (undo works),
+and can be reverted with `:SnipeRevert`.
+
+==============================================================================
+7. STATUSLINE                                        *snipe-statusline*
+
+>lua
+-- lualine
+{ function() return require("snipe").statusline() end }
+<
+Shows `⚡1` (running), `⋯1` (queued), `✋2` (review) plus the current status
+message. The statusline is refreshed automatically.
+
+==============================================================================
+8. API                                               *snipe-api*
+
+  require("snipe").setup(opts)   configure the plugin
+  require("snipe").ask([q])      ask a question (async)
+  require("snipe").task(prompt)  start a task ("--auto" prefix supported)
+  require("snipe").panel_toggle() toggle the task panel
+  require("snipe").statusline()  statusline component
+  require("snipe").kill([id])    kill a task
+  require("snipe").apply([id])   apply pending edits
+  require("snipe").revert([id])  revert applied edits
+  require("snipe").tasks         the task manager module
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
